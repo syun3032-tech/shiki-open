@@ -198,9 +198,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Observation start failed: {e}")
 
+    # アクティビティトラッカー起動（バックグラウンドでユーザーの行動を学習）
+    activity_task = None
+    try:
+        from agent.activity_tracker import start_activity_tracker
+        activity_task = await start_activity_tracker()
+        if activity_task:
+            logger.info("Activity tracker started (learning user behavior)")
+    except Exception as e:
+        logger.warning(f"Activity tracker start failed: {e}")
+
     yield  # サーバー稼働中
 
     # シャットダウン
+    if activity_task:
+        from agent.activity_tracker import stop_activity_tracker
+        await stop_activity_tracker()
     daily_task.cancel()
     for task in scheduler_tasks:
         task.cancel()

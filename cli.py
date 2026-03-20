@@ -88,6 +88,13 @@ async def init_agent():
         print(f"\n{C.RED}エージェント初期化失敗: {e}{C.RESET}")
         sys.exit(1)
 
+    # アクティビティトラッカー起動（バックグラウンドで行動学習）
+    try:
+        from agent.activity_tracker import start_activity_tracker
+        await start_activity_tracker()
+    except Exception:
+        pass
+
     print(f"\r  {C.GREEN}準備完了{C.RESET} {C.DIM}{mcp_status}{C.RESET}      \n")
 
 
