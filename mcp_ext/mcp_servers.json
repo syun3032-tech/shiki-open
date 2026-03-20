@@ -1,0 +1,43 @@
+{
+  "servers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "enabled": true,
+      "description": "Web URL取得（HTML→Markdown変換）"
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "enabled": true,
+      "description": "GitHub API（PR/Issue/Repository管理）"
+    },
+    "google_calendar": {
+      "command": "npx",
+      "args": ["-y", "@cocal/google-calendar-mcp"],
+      "env": {
+        "GOOGLE_OAUTH_CREDENTIALS": "${GCP_OAUTH_CREDENTIALS_PATH}"
+      },
+      "enabled": true,
+      "description": "Google Calendar（予定読み書き）"
+    },
+    "notion": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        "NOTION_TOKEN": "${NOTION_API_KEY}"
+      },
+      "enabled": true,
+      "description": "Notion API（タスクDB読み書き）"
+    },
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
+      "enabled": true,
+      "description": "Gmail API（メール検索・読み取り・下書き作成。送信はしない）"
+    }
+  }
+}

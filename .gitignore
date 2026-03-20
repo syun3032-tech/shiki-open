@@ -1,0 +1,41 @@
+# Secrets - NEVER commit
+.env
+.env.*
+
+# Runtime
+__pycache__/
+*.pyc
+static/images/*
+!static/images/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Memory & personal data (generated per-user by setup_wizard)
+.ritsu/
+
+
+# User config (contains personal info - use user_config.example.json as template)
+user_config.json
+
+# Virtual env
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS specific binaries (users build their own)
+tools/shiki_capture
+tools/ShikiCapture.app/
+
+# Firebase
+firebase-debug.log

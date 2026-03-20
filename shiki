@@ -1,0 +1,22 @@
+#!/bin/bash
+# 識（しき）CLI ランチャー
+# 使い方: shiki              → 対話モード（ターミナル直接）
+#         shiki "〇〇して"   → ワンショット
+#         shiki discord      → Discord Bot 起動
+
+# シンボリックリンクを解決して実体のディレクトリへ移動
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || python3 -c "import os; print(os.path.realpath('$0'))")"
+PROJECT_DIR="$(dirname "$SCRIPT_PATH")"
+cd "$PROJECT_DIR" || exit 1
+
+# venv有効化
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+fi
+
+# モード分岐
+if [ "$1" = "discord" ]; then
+    exec python3 -m discord_client.bot
+else
+    exec python3 cli.py "$@"
+fi

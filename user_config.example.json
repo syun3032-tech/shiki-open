@@ -1,0 +1,33 @@
+{
+  "owner_name": "あなたの名前",
+  "owner_display_name": "ニックネーム",
+  "shiki_name": "識",
+  "shiki_personality": "親しみやすい、頼りになる、丁寧、成長する",
+  "language": "ja",
+  "allowed_apps": [
+    "Google Chrome", "Safari", "Firefox", "Arc",
+    "Finder", "Notes", "Reminders", "Calendar", "Preview",
+    "TextEdit", "Calculator",
+    "Terminal", "Cursor", "Visual Studio Code",
+    "Slack", "Discord",
+    "Music", "Spotify"
+  ],
+  "browser_profiles": {
+    "your-email@gmail.com": "Default",
+    "work@company.com": "Profile 1"
+  },
+  "browser_profile_aliases": {
+    "個人": "your-email@gmail.com",
+    "会社": "work@company.com"
+  },
+  "channels": {
+    "line": false,
+    "discord": false,
+    "cli": true
+  },
+  "observation": {
+    "enabled": false,
+    "interval_seconds": 30,
+    "learn_patterns": true
+  }
+}
