@@ -517,6 +517,56 @@ class MacOSPlatform(PlatformBase):
             "title": title_result.get("output", ""),
         }
 
+    async def get_all_browser_tabs(self) -> list[dict]:
+        """全ブラウザの全タブ（URL+タイトル）を取得"""
+        tabs = []
+
+        # Chrome
+        chrome_script = '''
+tell application "System Events"
+    if exists (process "Google Chrome") then
+        tell application "Google Chrome"
+            set tabList to {}
+            repeat with w in windows
+                repeat with t in tabs of w
+                    set end of tabList to (URL of t) & "|||" & (title of t)
+                end repeat
+            end repeat
+            return tabList as text
+        end tell
+    end if
+end tell'''
+        result = await self._run_osascript(chrome_script, timeout=5)
+        if result.get("success") and result.get("output"):
+            for entry in result["output"].split(", "):
+                parts = entry.split("|||", 1)
+                if len(parts) == 2 and parts[0].startswith("http"):
+                    tabs.append({"url": parts[0].strip(), "title": parts[1].strip(), "browser": "Chrome"})
+
+        # Arc
+        arc_script = '''
+tell application "System Events"
+    if exists (process "Arc") then
+        tell application "Arc"
+            set tabList to {}
+            repeat with w in windows
+                repeat with t in tabs of w
+                    set end of tabList to (URL of t) & "|||" & (title of t)
+                end repeat
+            end repeat
+            return tabList as text
+        end tell
+    end if
+end tell'''
+        result = await self._run_osascript(arc_script, timeout=5)
+        if result.get("success") and result.get("output"):
+            for entry in result["output"].split(", "):
+                parts = entry.split("|||", 1)
+                if len(parts) == 2 and parts[0].startswith("http"):
+                    tabs.append({"url": parts[0].strip(), "title": parts[1].strip(), "browser": "Arc"})
+
+        return tabs
+
     async def get_window_info(self) -> dict:
         script = '''
 tell application "System Events"

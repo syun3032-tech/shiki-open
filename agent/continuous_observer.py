@@ -278,55 +278,243 @@ class ContinuousObserver:
         except Exception as e:
             logger.debug(f"Activity log write failed: {e}")
 
-    # === 観察 ===
+    # === 観察（3ティア統合） ===
 
-    async def observe_once(self) -> dict | None:
-        """1回の観察（APIコスト$0、10秒ごと）"""
+    # Tier 1 スナップショットバッファ（直近30分 = 360個 @ 5秒間隔）
+    _snapshot_buffer: list = []
+    _MAX_BUFFER = 360
+
+    # Tier 2 Vision結果バッファ
+    _vision_results: list[dict] = []
+    _vision_count_this_hour: int = 0
+    _vision_hour: int = -1
+    _VISION_MAX_PER_HOUR = 30
+
+    async def observe_once(self, cycle: int = 0) -> dict | None:
+        """Tier 1: フルスナップショット収集（APIコスト$0）
+
+        collectors.pyの全11データソースからスタガード収集。
+        コンテキスト変化時だけでなく、毎サイクル記録する。
+        """
         try:
             from platform_layer import get_platform
-            platform = get_platform()
+            from agent.observers.collectors import collect_full_snapshot
+            from agent.observers.categorizer import categorize_activity
 
-            front_app = await platform.get_frontmost_app()
-            if not front_app:
+            platform = get_platform()
+            snap = await collect_full_snapshot(
+                platform, cycle,
+                last_content_hash=self._last_context,
+                project_path="",
+            )
+
+            if not snap.frontmost_app:
                 return None
 
-            window_info = await platform.get_window_info()
-            browser_info = await platform.get_browser_info()
+            # アクティビティ分類
+            snap.activity_category = categorize_activity(
+                snap.frontmost_app, snap.browser_url, snap.window_title,
+            )
 
-            title = window_info.get("title", "")
-            url = browser_info.get("url", "")
-            hour = str(datetime.now().hour)
+            # 統計更新（常に）
+            hour = str(snap.hour)
+            self.app_usage[snap.frontmost_app] += 1
+            self.time_slots[hour][snap.frontmost_app] += 1
 
-            # 統計更新（アプリ名のみ、常に記録）
-            self.app_usage[front_app] += 1
-            self.time_slots[hour][front_app] += 1
+            # 機密チェック
+            if _is_sensitive_context(snap.frontmost_app, snap.window_title, snap.browser_url):
+                snap.is_sensitive = True
+                return {"app": snap.frontmost_app, "sensitive": True}
 
-            # 機密コンテキストチェック
-            if _is_sensitive_context(front_app, title, url):
-                logger.debug(f"Sensitive context skipped: {front_app}")
-                return {"app": front_app, "sensitive": True}
+            # バッファに追加（常に、コンテキスト変化関係なく）
+            self._snapshot_buffer.append(snap)
+            if len(self._snapshot_buffer) > self._MAX_BUFFER:
+                self._snapshot_buffer = self._snapshot_buffer[-self._MAX_BUFFER:]
 
-            # コンテキスト遷移チェック
-            ctx_key = _normalize_context_key(front_app, title, url)
+            # コンテキスト遷移チェック（ワークフロー検出用）
+            ctx_key = _normalize_context_key(snap.frontmost_app, snap.window_title, snap.browser_url)
             if ctx_key != self._last_context:
                 self._last_context = ctx_key
                 now = time.monotonic()
 
-                # ステップ情報を構築
-                step = {"app": front_app}
-                if url:
-                    step["url"] = _strip_url_query(url)
-                if title:
-                    step["title"] = title[:80]
+                step = {"app": snap.frontmost_app}
+                if snap.browser_url:
+                    step["url"] = _strip_url_query(snap.browser_url)
+                if snap.window_title:
+                    step["title"] = snap.window_title[:80]
+                if snap.editor_project:
+                    step["project"] = snap.editor_project
 
                 self._context_sequence.append((ctx_key, now, step))
-                self._append_activity_log(front_app, title, url)
+                self._append_activity_log(
+                    snap.frontmost_app, snap.window_title, snap.browser_url,
+                )
 
-            return {"app": front_app, "title": title, "url": url}
+            # コンテンツ変化（同じアプリ内でのタブ切替等）もログ
+            elif snap.content_hash != getattr(self, '_last_content_hash', ''):
+                self._append_activity_log(
+                    snap.frontmost_app, snap.window_title, snap.browser_url,
+                )
+            self._last_content_hash = snap.content_hash
+
+            return {
+                "app": snap.frontmost_app,
+                "title": snap.window_title,
+                "url": snap.browser_url,
+                "category": snap.activity_category,
+                "content_hash": snap.content_hash,
+            }
 
         except Exception as e:
             logger.warning(f"Observation failed: {e}")
             return None
+
+    async def observe_tier2(self) -> dict | None:
+        """Tier 2: スクショ → Vision AI → 構造化抽出 → 画像即削除
+
+        レート制限: 30回/時。画面変化なしならスキップ。
+        """
+        # レート制限チェック
+        current_hour = datetime.now().hour
+        if current_hour != self._vision_hour:
+            self._vision_count_this_hour = 0
+            self._vision_hour = current_hour
+        if self._vision_count_this_hour >= self._VISION_MAX_PER_HOUR:
+            return None
+
+        from platform_layer import get_platform
+        platform = get_platform()
+
+        # 機密チェック
+        front_app = await platform.get_frontmost_app()
+        window = await platform.get_window_info()
+        browser = await platform.get_browser_info()
+        if _is_sensitive_context(front_app, window.get("title", ""), browser.get("url", "")):
+            return None
+
+        OBSERVATION_DIR.mkdir(parents=True, exist_ok=True)
+        ss_path = str(OBSERVATION_DIR / f"t2_{int(time.time())}.jpg")
+
+        try:
+            captured = await platform.take_screenshot(ss_path)
+            if not captured:
+                return None
+
+            # MD5変化チェック
+            img_bytes = Path(ss_path).read_bytes()
+            img_hash = hashlib.md5(img_bytes).hexdigest()
+            if img_hash == self._last_screenshot_hash:
+                Path(ss_path).unlink(missing_ok=True)
+                return None
+            self._last_screenshot_hash = img_hash
+
+            # リサイズ（トークン節約+セキュリティ）
+            resized = ss_path.replace(".jpg", "_s.jpg")
+            ok = await platform.resize_image(ss_path, resized, 512)
+            if ok:
+                Path(ss_path).unlink(missing_ok=True)
+                ss_path = resized
+
+            # 構造化Vision抽出
+            result = await self._vision_structured_extract(ss_path)
+
+            # 画像即削除
+            Path(ss_path).unlink(missing_ok=True)
+
+            if result:
+                self._vision_count_this_hour += 1
+                self._vision_results.append(result)
+                # 直近20件のみ保持
+                if len(self._vision_results) > 20:
+                    self._vision_results = self._vision_results[-20:]
+                return result
+
+        except Exception as e:
+            logger.warning(f"Tier 2 observation failed: {e}")
+            Path(ss_path).unlink(missing_ok=True)
+
+        return None
+
+    async def _vision_structured_extract(self, screenshot_path: str) -> dict | None:
+        """スクショから構造化データを抽出"""
+        if not GEMINI_API_KEY:
+            return None
+
+        try:
+            import google.genai as genai
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            img_bytes = Path(screenshot_path).read_bytes()
+
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[
+                        genai.types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
+                        genai.types.Part(text=(
+                            "Analyze this macOS screenshot. Extract structured info as JSON:\n"
+                            '{"activity":"what user is doing (1 sentence)",'
+                            '"app_context":"specific feature/panel being used",'
+                            '"content_topic":"subject/topic visible on screen",'
+                            '"code_context":"if coding: language, file, function. else null",'
+                            '"communication_context":"if chatting: platform, person (NOT message content). else null",'
+                            '"actionable_items":"visible TODOs, deadlines, notifications. else null"}\n'
+                            "Rules: NEVER include passwords, API keys, or message content. "
+                            "Output ONLY valid JSON. Japanese for activity description."
+                        )),
+                    ],
+                    config=genai.types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=250,
+                    ),
+                ),
+                timeout=15,
+            )
+
+            text = (response.text or "").strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
+            result = json.loads(text)
+            result["_ts"] = datetime.now().isoformat()
+            logger.info(f"Tier 2 vision: {result.get('activity', '')[:50]}")
+            return result
+
+        except Exception as e:
+            logger.debug(f"Vision extract failed: {e}")
+            return None
+
+    async def run_tier3_analysis(self) -> dict | None:
+        """Tier 3: 蓄積データのAI深層分析（30分ごと）"""
+        if not self._snapshot_buffer:
+            return None
+
+        try:
+            from agent.observers.analyzer import (
+                build_analysis_payload, run_analysis, persist_insights,
+            )
+
+            payload = build_analysis_payload(
+                snapshots=self._snapshot_buffer,
+                vision_results=self._vision_results,
+                app_usage=self.app_usage,
+                period_minutes=len(self._snapshot_buffer) * self.interval / 60,
+            )
+
+            if not payload:
+                return None
+
+            analysis = await run_analysis(payload)
+            if analysis:
+                persist_insights(analysis)
+                return analysis
+
+        except Exception as e:
+            logger.warning(f"Tier 3 analysis failed: {e}")
+
+        return None
 
     async def observe_with_screenshot(self) -> dict | None:
         """スクショ付き詳細観察（オプション、アプリ切替時のみ）
@@ -656,6 +844,238 @@ class ContinuousObserver:
             return ""
         return "# ユーザーの作業パターン（バックグラウンド学習）\n" + "\n".join(lines)
 
+    # === プロアクティブアシスタント（先回り行動） ===
+
+    async def analyze_and_suggest(self, push_fn=None) -> str | None:
+        """現在の作業コンテキストを分析して、先回り提案を生成
+
+        呼ばれるタイミング: アプリ切替時、または一定間隔
+        """
+        if not self._context_sequence:
+            return None
+
+        _, _, last_step = self._context_sequence[-1]
+        app = last_step.get("app", "")
+        title = last_step.get("title", "")
+        url = last_step.get("url", "")
+
+        # 機密コンテキストでは提案しない
+        if _is_sensitive_context(app, title, url):
+            return None
+
+        # コンテキストに応じた先回り行動ルール
+        suggestion = await self._context_based_suggestion(app, title, url)
+
+        if suggestion and push_fn:
+            try:
+                from config import DISCORD_OWNER_ID
+                await push_fn(str(DISCORD_OWNER_ID), suggestion)
+                logger.info(f"Proactive suggestion sent: {suggestion[:50]}")
+            except Exception as e:
+                logger.debug(f"Proactive push failed: {e}")
+
+        return suggestion
+
+    async def _context_based_suggestion(self, app: str, title: str, url: str) -> str | None:
+        """コンテキストに基づいた提案を生成（ルールベース + AI）"""
+        import google.genai as genai
+
+        # 直近の作業時間を計算
+        if len(self._context_sequence) >= 2:
+            _, first_ts, _ = self._context_sequence[-min(10, len(self._context_sequence))]
+            _, last_ts, _ = self._context_sequence[-1]
+            work_minutes = (last_ts - first_ts) / 60
+        else:
+            work_minutes = 0
+
+        # ルールベースの即時提案（APIコスト$0）
+        rule_suggestion = self._rule_based_suggestion(app, title, url, work_minutes)
+        if rule_suggestion:
+            return rule_suggestion
+
+        # AI提案は5分に1回まで（コスト抑制）
+        now = time.time()
+        if hasattr(self, '_last_ai_suggest') and now - self._last_ai_suggest < 300:
+            return None
+        self._last_ai_suggest = now
+
+        # 直近のコンテキスト列を整理
+        recent = self._context_sequence[-10:] if len(self._context_sequence) > 10 else self._context_sequence
+        context_text = "\n".join(
+            f"- {step.get('app', '?')}: {step.get('title', step.get('url', ''))[:60]}"
+            for _, _, step in recent
+        )
+
+        try:
+            import user_config
+            owner = user_config.get_display_name()
+        except Exception:
+            owner = "ユーザー"
+
+        # カレンダーの次の予定も取得（あれば）
+        next_event_text = ""
+        try:
+            from agent.scheduler import _fetch_upcoming_events
+            events = await _fetch_upcoming_events(minutes_ahead=60)
+            if events:
+                for ev in events[:1]:
+                    summary = ev.get("summary", "")
+                    start = ev.get("start", {})
+                    start_time = start.get("dateTime", "") if isinstance(start, dict) else ""
+                    if summary:
+                        next_event_text = f"\n次の予定: {summary}（{start_time}）"
+        except Exception:
+            pass
+
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            prompt = f"""{owner}のAI秘書として、{owner}の作業を観察して、本当に役立つ提案を1つだけ送る。
+
+現在の作業:
+- アプリ: {app}
+- タイトル: {title[:80]}
+- URL: {url[:80] if url else 'なし'}
+- 作業時間: {work_minutes:.0f}分{next_event_text}
+
+直近の作業コンテキスト:
+{context_text}
+
+ルール:
+- 本当に役立つ提案がある時だけ返す。なければ「なし」とだけ返す
+- 絵文字は使わない
+- 1-2文で簡潔に
+- 次の予定が近い場合はそれに言及する
+- 作業の流れを邪魔しない。提案であって命令ではない
+- 例: 「30分後にミーティングあるよ。そろそろ準備した方がいいかも」
+- 例: 「2時間連続でコーディングしてるね。そろそろ休憩した方がいいかも」
+- 例: 「案件ページ見てるね。応募文のテンプレート作っとこうか？」"""
+
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=genai.types.GenerateContentConfig(
+                        temperature=0.7,
+                        max_output_tokens=100,
+                    ),
+                ),
+                timeout=10,
+            )
+
+            text = (response.text or "").strip()
+            if text and text != "なし" and len(text) > 5:
+                return text
+
+        except Exception as e:
+            logger.debug(f"AI suggestion failed: {e}")
+
+        return None
+
+    # 同じ提案を繰り返さないためのクールダウン（提案キー → 最終提案時刻）
+    _suggestion_cooldowns: dict[str, float] = {}
+    _SUGGESTION_COOLDOWN_SEC = 30 * 60  # 同じ種類の提案は30分空ける
+
+    def _check_cooldown(self, suggestion_key: str) -> bool:
+        """クールダウン中ならTrue（提案しない）"""
+        last = self._suggestion_cooldowns.get(suggestion_key, 0)
+        if time.time() - last < self._SUGGESTION_COOLDOWN_SEC:
+            return True
+        return False
+
+    def _mark_suggested(self, suggestion_key: str):
+        """提案済みとしてマーク"""
+        self._suggestion_cooldowns[suggestion_key] = time.time()
+        # 古いエントリを削除（メモリリーク防止）
+        if len(self._suggestion_cooldowns) > 50:
+            oldest = sorted(self._suggestion_cooldowns.items(), key=lambda x: x[1])
+            for k, _ in oldest[:20]:
+                del self._suggestion_cooldowns[k]
+
+    def _rule_based_suggestion(self, app: str, title: str, url: str, work_minutes: float) -> str | None:
+        """ルールベースの即時提案（APIコスト$0、クールダウン付き）"""
+        title_lower = title.lower()
+        url_lower = url.lower()
+        app_lower = app.lower()
+
+        # --- 健康・集中 ---
+
+        # 長時間作業の休憩提案（90分以上）
+        if work_minutes >= 90 and not self._check_cooldown("break"):
+            self._mark_suggested("break")
+            return f"{work_minutes:.0f}分連続で作業してるね。そろそろ休憩した方がいいかも。"
+
+        # --- ミーティング ---
+
+        # ミーティングツールを開いた → 議事録準備
+        meet_urls = ("meet.google.com", "zoom.us", "teams.microsoft.com")
+        meet_apps = ("zoom.us", "Microsoft Teams", "FaceTime")
+        if (any(u in url_lower for u in meet_urls) or app in meet_apps) and not self._check_cooldown("meeting"):
+            self._mark_suggested("meeting")
+            return "ミーティング始まりそうだね。議事録テンプレート作っとこうか？"
+
+        # --- フリーランス・案件 ---
+
+        # CrowdWorks/ランサーズの案件ページ
+        if ("crowdworks.jp" in url_lower or "lancers.jp" in url_lower) and not self._check_cooldown("freelance"):
+            if any(kw in url_lower for kw in ("job", "detail", "search")) or "案件" in title_lower:
+                self._mark_suggested("freelance")
+                return "案件見てるね。気になるのあったら応募文作るの手伝うよ。"
+
+        # --- 開発 ---
+
+        # エラーページ/Stack Overflow → デバッグ支援
+        if ("stackoverflow.com" in url_lower or "github.com" in url_lower and "issues" in url_lower) and not self._check_cooldown("debug"):
+            self._mark_suggested("debug")
+            return "エラー調べてる？コード見せてくれたらデバッグ手伝うよ。"
+
+        # GitHub PR → レビュー支援
+        if "github.com" in url_lower and "pull" in url_lower and not self._check_cooldown("pr_review"):
+            self._mark_suggested("pr_review")
+            return "PR見てるね。レビューポイントまとめようか？"
+
+        # IDE/エディタで長時間 → コーディング支援
+        if app_lower in ("cursor", "visual studio code", "xcode", "pycharm") and work_minutes >= 45 and not self._check_cooldown("coding"):
+            self._mark_suggested("coding")
+            return "コーディング中だね。テスト書いたりリファクタリングの相談あればいつでも。"
+
+        # --- ビジネス ---
+
+        # Notion → タスク管理支援
+        if "notion.so" in url_lower and not self._check_cooldown("notion"):
+            self._mark_suggested("notion")
+            return "Notion開いてるね。タスクの整理とか優先度の見直し、手伝おうか？"
+
+        # Google Docs/Slides → ドキュメント支援
+        if ("docs.google.com" in url_lower or "slides.google.com" in url_lower) and not self._check_cooldown("docs"):
+            self._mark_suggested("docs")
+            return "ドキュメント作ってるね。構成の相談とか校正とか手伝えるよ。"
+
+        # Figma/デザインツール → デザインフィードバック
+        if ("figma.com" in url_lower or app_lower == "figma") and not self._check_cooldown("design"):
+            self._mark_suggested("design")
+            return "デザイン作業中だね。UIの改善点とかフィードバックほしかったら言って。"
+
+        # Canva → デザイン支援
+        if "canva.com" in url_lower and not self._check_cooldown("canva"):
+            self._mark_suggested("canva")
+            return "Canva使ってるね。コピーライティングとか色の提案とか手伝えるよ。"
+
+        # --- メール ---
+
+        # Gmail → メール処理支援
+        if "mail.google.com" in url_lower and not self._check_cooldown("email"):
+            self._mark_suggested("email")
+            return "メール確認してるね。返信の下書き作ったり、重要なメールのピックアップ手伝おうか？"
+
+        # --- 学習・リサーチ ---
+
+        # YouTube → 学習中かも
+        if "youtube.com" in url_lower and "/watch" in url_lower and work_minutes >= 20 and not self._check_cooldown("youtube_learn"):
+            self._mark_suggested("youtube_learn")
+            return "動画見てるね。内容のメモとかまとめが必要だったら言って。"
+
+        return None
+
     def get_work_summary(self) -> dict:
         """作業プロファイルのサマリー"""
         top_apps = self.app_usage.most_common(5)
@@ -695,6 +1115,9 @@ class ContinuousObserver:
 
 _notion_status_page_id: str | None = None
 
+# 既知の観察モニターページID（検索コスト削減）
+_KNOWN_MONITOR_PAGE_ID = "329a57aa-8f28-8169-98b9-ed879502bb78"
+
 
 async def _find_or_create_notion_status() -> str | None:
     """Notionに「観察ステータス」ページを探す or 作る。ページIDを返す。"""
@@ -702,23 +1125,33 @@ async def _find_or_create_notion_status() -> str | None:
     if _notion_status_page_id:
         return _notion_status_page_id
 
+    # 既知のページIDを先に試す
+    try:
+        from tools.notion import get_project
+        result = await get_project(_KNOWN_MONITOR_PAGE_ID)
+        if result.get("success"):
+            _notion_status_page_id = _KNOWN_MONITOR_PAGE_ID
+            return _notion_status_page_id
+    except Exception:
+        pass
+
+    # フォールバック: 検索
     try:
         from tools.notion import list_projects, create_project
         result = await list_projects()
         if not result.get("success"):
             return None
 
-        # 既存の観察ステータスページを探す
         for p in result["projects"]:
             name = p.get("プロジェクト名", "")
-            if "観察" in name and ("ステータス" in name or "モニター" in name):
+            if "観察" in name and "モニター" in name:
                 _notion_status_page_id = p["id"]
                 return _notion_status_page_id
 
         # なければ作成
         new_proj = await create_project(
             name="識ちゃん観察モニター",
-            category="システム",
+            category="プロダクト",
             status="進行中",
             memo="バックグラウンド観察・学習システムのステータス。ステータスを「停止」にすると観察を停止、「進行中」で再開。",
         )
@@ -830,10 +1263,18 @@ async def start_observation_loop(push_callback=None) -> asyncio.Task | None:
     except Exception:
         vision_enabled = False
 
+    # Tier 3有効かどうか
+    try:
+        import user_config as _uc2
+        tier3_enabled = _uc2.get("observation.tier3_enabled", True)
+    except Exception:
+        tier3_enabled = True
+
     async def _loop():
         global _observer_running
         cycle = 0
         last_app = ""
+        last_content_hash = ""
         paused_by_notion = False
 
         # 起動時にNotionにステータス報告
@@ -869,18 +1310,41 @@ async def start_observation_loop(push_callback=None) -> asyncio.Task | None:
                     cycle += 1
                     continue
 
-                # === 通常観察 ===
-                result = await observer.observe_once()
+                # === Tier 1: フルスナップショット収集 ===
+                result = await observer.observe_once(cycle)
                 cycle += 1
 
-                # Vision: アプリが切り替わった時だけ（かつVision有効時）
-                if vision_enabled and result and not result.get("sensitive"):
+                if result and not result.get("sensitive"):
                     current_app = result.get("app", "")
-                    if current_app and current_app != last_app:
-                        await observer.observe_with_screenshot()
-                    last_app = current_app
+                    content_hash = result.get("content_hash", "")
 
-                # 50サイクル（約8分）ごとにワークフロー検出
+                    # === Tier 2: Vision（アプリ切替 or コンテンツ変化時） ===
+                    app_switched = current_app and current_app != last_app
+                    content_changed = content_hash and content_hash != last_content_hash
+
+                    if vision_enabled and (app_switched or (content_changed and cycle % 6 == 0)):
+                        try:
+                            await observer.observe_tier2()
+                        except Exception as t2_err:
+                            logger.debug(f"Tier 2 error: {t2_err}")
+
+                    # 先回り提案（アプリ切替時）
+                    if app_switched and push_callback:
+                        try:
+                            suggestion = await observer._context_based_suggestion(
+                                current_app,
+                                result.get("title", ""),
+                                result.get("url", ""),
+                            )
+                            if suggestion:
+                                await push_callback(suggestion)
+                        except Exception as _proactive_err:
+                            logger.debug(f"Proactive suggestion error: {_proactive_err}")
+
+                    last_app = current_app
+                    last_content_hash = content_hash
+
+                # === ワークフロー検出（50サイクル≈4分@5秒） ===
                 if cycle % 50 == 0:
                     new_wfs = observer.detect_workflows()
                     if new_wfs and push_callback:
@@ -893,7 +1357,34 @@ async def start_observation_loop(push_callback=None) -> asyncio.Task | None:
                             except Exception:
                                 pass
 
-                # 300サイクル（約50分）ごとにデータ永続化 + Notionステータス更新
+                # === Tier 3: AI深層分析（360サイクル≈30分@5秒） ===
+                if tier3_enabled and cycle % 360 == 0 and cycle > 0:
+                    try:
+                        analysis = await observer.run_tier3_analysis()
+                        if analysis and push_callback:
+                            # 高信頼度の提案をDiscordに送信
+                            suggestions = analysis.get("suggestions", [])
+                            for s in suggestions[:2]:
+                                if s.get("confidence", 0) >= 0.7:
+                                    try:
+                                        await push_callback(s["message"])
+                                    except Exception:
+                                        pass
+                            # 作業モード通知（deep_work以外の時）
+                            mode = analysis.get("work_mode", "")
+                            score = analysis.get("focus_score", 0)
+                            if mode == "context_switching" and score < 40:
+                                try:
+                                    await push_callback(
+                                        f"コンテキストスイッチ多めだね（集中スコア: {score}/100）。"
+                                        f"1つのタスクに絞ってみる？"
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception as t3_err:
+                        logger.warning(f"Tier 3 error: {t3_err}")
+
+                # === データ永続化 + Notionステータス（300サイクル≈25分） ===
                 if cycle % 300 == 0:
                     observer.flush()
                     observer.cleanup_old_data()

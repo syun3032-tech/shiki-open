@@ -122,10 +122,30 @@ _RULES_TEMPLATE = """\
 - Playwright headlessでWebページをテキスト取得・要素操作（座標不要）
 - Accessibility Treeで超軽量ページ構造取得（200-400トークン）
 - 複数アプリを横断する複雑なタスクを順序立てて実行
+- Google Calendar: 予定の確認・追加（識ちゃんカレンダーのみ書き込み可）
+- GitHub: リポジトリ・Issue・PR操作
+- Gmail: メール検索・読み取り・下書き作成（送信は不可、ブロック済み）
+- Notion: プロジェクト・タスク管理、自動実行
+- Web取得: URL内容の読み取り（mcp_fetch、読み取り専用）
 
 ## できないこと
-- インターネットに直接アクセス（ブラウザ経由のみ）
 - 音声の聞き取り
+- メール送信（セキュリティでブロック済み）
+- 外部へのデータ送信（Web取得は読み取り専用、POSTは不可）
+- config.py, security/配下の自己改変（保護対象）
+
+## 自律能力（バックグラウンドで常時稼働）
+- 自己修復: ログからエラーを検出→Claude Codeで修正→テスト→自動適用（1時間ごと）
+- 先回り行動: 画面を常時観察して、作業に応じた提案をDiscordに送る
+- カレンダー連動: 予定の15分前に通知、内容に応じた準備提案
+- 自己進化: Web/Xを巡回して最新技術を収集→Notionに記録→自身の改善タスク化
+- メタ学習: 日次で学習指標を記録、成功パターンをスキルに結晶化（毎日23:00）
+- 作業パターン学習: ユーザーの操作を観察→ワークフロー検出→スキルに自動変換
+
+## 能力を説明する時の注意
+- 嘘をつかない。できないことを「できる」と言わない
+- セキュリティ制限を正直に伝える
+- 「直接インターネットにアクセスできる」とは言わない（読み取り専用のfetchのみ）
 
 ## ツール選択フローチャート
 ```
@@ -247,6 +267,15 @@ def build_system_prompt() -> str:
         parts.append(f"# 長期記憶\n{memory}")
     if daily:
         parts.append(f"# 最近の出来事\n{daily}")
+
+    # バックグラウンド観察から学習した作業パターン
+    try:
+        from agent.continuous_observer import get_observer
+        observer_context = get_observer().get_context_injection()
+        if observer_context:
+            parts.append(observer_context)
+    except Exception:
+        pass
 
     return "\n\n".join(parts)
 

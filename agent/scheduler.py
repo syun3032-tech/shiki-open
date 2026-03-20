@@ -1315,6 +1315,56 @@ async def self_evolution_loop(push_fn):
             await asyncio.sleep(600)
 
 
+async def self_heal_loop(push_fn):
+    """自己修復ループ: ログからエラー検出→修正→通知（1時間ごと）"""
+    await asyncio.sleep(300)  # 起動後5分待つ
+    while True:
+        try:
+            now = datetime.now()
+            if not (9 <= now.hour < 23):
+                await asyncio.sleep(3600)
+                continue
+            from tools.self_heal import self_heal_cycle
+            result = await self_heal_cycle(push_fn)
+            if result.get("patches_created", 0) > 0:
+                logger.info(f"Self-heal: {result['patches_created']} patches created")
+            await asyncio.sleep(60 * 60)  # 1時間ごと
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Self-heal error: {e}")
+            await asyncio.sleep(600)
+
+
+async def meta_learning_loop(push_fn):
+    """メタ学習ループ: 日次指標 + クロスシステム学習 + Claude Code壁打ち（1日1回、23:00）"""
+    await asyncio.sleep(300)
+    while True:
+        try:
+            now = datetime.now()
+            # 23:00に実行
+            target = now.replace(hour=23, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            wait = (target - now).total_seconds()
+            logger.info(f"Meta-learning scheduled at 23:00 ({wait:.0f}s from now)")
+            await asyncio.sleep(wait)
+
+            from agent.meta_learner import meta_learning_cycle, self_improvement_session
+
+            # メタ学習（指標記録 + クロスシステム学習）
+            await meta_learning_cycle(push_fn)
+
+            # Claude Code壁打ち（自己改善セッション）
+            await self_improvement_session(push_fn)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Meta-learning error: {e}")
+            await asyncio.sleep(3600)
+
+
 async def start_all_schedulers(push_fn) -> list[asyncio.Task]:
     """全スケジューラーを起動し、タスクのリストを返す"""
     global _cron_tasks
@@ -1327,6 +1377,8 @@ async def start_all_schedulers(push_fn) -> list[asyncio.Task]:
         asyncio.create_task(notion_task_patrol_loop(push_fn)),
         asyncio.create_task(self_evolution_loop(push_fn)),
         asyncio.create_task(calendar_assistant_loop(push_fn)),
+        asyncio.create_task(self_heal_loop(push_fn)),
+        asyncio.create_task(meta_learning_loop(push_fn)),
     ]
     _cron_tasks = tasks
     logger.info(f"Started {len(tasks)} scheduler tasks")

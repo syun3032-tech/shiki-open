@@ -37,8 +37,11 @@ _DEFAULT_CONFIG = {
     },
     "observation": {
         "enabled": False,
-        "interval_seconds": 30,
+        "interval_seconds": 5,
         "learn_patterns": True,
+        "vision_enabled": False,
+        "tier3_enabled": True,
+        "sensitive_apps": [],
     },
 }
 
