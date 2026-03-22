@@ -282,7 +282,8 @@ def save_setup(config: dict):
         env_lines += ["", "# Optional", "NOTION_API_KEY="]
         env_path.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
         import os
-        os.chmod(env_path, 0o600)
+        if sys.platform != "win32":
+            os.chmod(env_path, 0o600)
         print(f"  {C.GREEN}✓{C.RESET} .env テンプレートを生成（APIキーを設定してください）")
 
 

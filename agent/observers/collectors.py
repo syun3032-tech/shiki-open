@@ -117,7 +117,10 @@ async def collect_core(platform) -> dict:
     """コア情報: フロントアプリ+ウィンドウタイトル+CPU"""
     app = await platform.get_frontmost_app()
     window = await platform.get_window_info()
-    cpu = os.getloadavg()[0]
+    try:
+        cpu = os.getloadavg()[0]
+    except (OSError, AttributeError):
+        cpu = 0.0
 
     title = window.get("title", "")
     content_hash = hashlib.md5(f"{app}:{title[:80]}".encode()).hexdigest()[:8]
@@ -304,6 +307,9 @@ def detect_meeting(running_apps: list[str], browser_url: str) -> dict:
 
 async def collect_display_count() -> int:
     """接続ディスプレイ数"""
+    import sys
+    if sys.platform != "darwin":
+        return 1
     try:
         proc = await asyncio.create_subprocess_exec(
             "system_profiler", "SPDisplaysDataType", "-detailLevel", "mini",

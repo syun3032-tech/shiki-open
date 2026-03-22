@@ -545,6 +545,9 @@ BREAK_CHECK_INTERVAL = 10 * 60  # 10分ごとにチェック
 
 async def _get_idle_seconds() -> float:
     """macOSのアイドル時間を取得（HIDIdleTime — キーボード/マウス無操作時間）"""
+    import sys
+    if sys.platform != "darwin":
+        return 0.0
     try:
         proc = await asyncio.create_subprocess_exec(
             "/usr/sbin/ioreg", "-c", "IOHIDSystem",

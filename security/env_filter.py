@@ -10,6 +10,9 @@ import os
 SAFE_ENV_KEYS = frozenset({
     "HOME", "PATH", "LANG", "SHELL", "USER", "TMPDIR",
     "TERM", "LOGNAME", "PWD",
+    # Windows equivalents
+    "USERPROFILE", "USERNAME", "TEMP", "TMP", "COMPUTERNAME",
+    "APPDATA", "LOCALAPPDATA", "SYSTEMROOT", "COMSPEC",
 })
 
 

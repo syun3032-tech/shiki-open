@@ -6,6 +6,7 @@ DMのみ受付。オーナー以外は無視。
 
 import asyncio
 import logging
+import sys
 from pathlib import Path
 
 import discord
@@ -266,7 +267,7 @@ def run():
 
     # .env パーミッション
     env_file = Path(__file__).parent.parent / ".env"
-    if env_file.exists():
+    if env_file.exists() and sys.platform != "win32":
         mode = oct(env_file.stat().st_mode)[-3:]
         if mode != "600":
             logger.warning(f".env のパーミッション {mode} → 600 に修正")

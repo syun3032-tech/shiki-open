@@ -130,11 +130,11 @@ def get_allowed_paths() -> list[str]:
     """許可パスを取得（空ならデフォルト）"""
     paths = get("allowed_paths", [])
     if not paths:
-        home = str(Path.home())
+        home = Path.home()
         return [
-            f"{home}/Desktop",
-            f"{home}/Documents",
-            f"{home}/Downloads",
+            str(home / "Desktop"),
+            str(home / "Documents"),
+            str(home / "Downloads"),
         ]
     return paths
 

@@ -130,14 +130,14 @@ async def lifespan(app: FastAPI):
 
     # .envパーミッション確認
     env_file = config.PROJECT_ROOT / ".env"
-    if env_file.exists():
+    if env_file.exists() and sys.platform != "win32":
         mode = oct(env_file.stat().st_mode)[-3:]
         if mode != "600":
             logger.warning(f".envのパーミッションが{mode}です。600に修正します。")
             os.chmod(env_file, 0o600)
 
     # .ritsu/パーミッション確認
-    if config.RITSU_DIR.exists():
+    if config.RITSU_DIR.exists() and sys.platform != "win32":
         mode = oct(config.RITSU_DIR.stat().st_mode)[-3:]
         if mode != "700":
             os.chmod(config.RITSU_DIR, 0o700)

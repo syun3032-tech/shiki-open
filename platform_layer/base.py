@@ -4,6 +4,7 @@
 各OSの実装はこのクラスを継承して具体的な処理を実装する。
 """
 
+import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -191,7 +192,7 @@ class PlatformBase(ABC):
             home / "Desktop",
             home / "Documents",
             home / "Downloads",
-            Path("/tmp"),
+            Path(tempfile.gettempdir()),
         ]
 
     @abstractmethod

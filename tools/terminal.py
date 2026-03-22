@@ -11,6 +11,7 @@ import asyncio
 import logging
 import shlex
 import re
+import sys
 
 logger = logging.getLogger("shiki.tools")
 
@@ -128,7 +129,7 @@ def _validate_command(command: str) -> tuple[bool, str]:
 
     # コマンドを解析
     try:
-        parts = shlex.split(command)
+        parts = shlex.split(command, posix=(sys.platform != "win32"))
     except ValueError as e:
         return False, f"コマンド解析エラー: {e}"
 
@@ -204,7 +205,8 @@ def _get_allowed_cwd_prefixes() -> tuple[str, ...]:
 
     # プロジェクトルートも常に許可
     project_root = str(__import__("config").PROJECT_ROOT)
-    all_paths = list(paths) + [project_root, "/tmp"]
+    import tempfile
+    all_paths = list(paths) + [project_root, tempfile.gettempdir()]
     return tuple(all_paths)
 
 

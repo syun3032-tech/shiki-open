@@ -3,6 +3,7 @@
 ホワイトリスト + ブラックリストの二重防御。
 """
 
+import tempfile
 from pathlib import Path
 
 # 絶対にアクセスさせないパス
@@ -23,7 +24,7 @@ ALLOWED_READ_PATHS = [
     Path.home() / "Desktop",
     Path.home() / "Documents",
     Path.home() / "Downloads",
-    Path("/tmp/shiki"),
+    Path(tempfile.gettempdir()) / "shiki",
     _PROJECT_ROOT,
 ]
 
@@ -32,7 +33,7 @@ ALLOWED_WRITE_PATHS = [
     Path.home() / "Desktop",
     Path.home() / "Documents",
     Path.home() / "Downloads",
-    Path("/tmp/shiki"),
+    Path(tempfile.gettempdir()) / "shiki",
     _PROJECT_ROOT / ".ritsu",
     _PROJECT_ROOT / "static" / "images",
     _PROJECT_ROOT / "logs",

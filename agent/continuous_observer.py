@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -256,7 +257,8 @@ class ContinuousObserver:
         """日次アクティビティログに追記（セキュア）"""
         ACTIVITY_LOG_DIR.mkdir(parents=True, exist_ok=True)
         try:
-            ACTIVITY_LOG_DIR.chmod(0o700)
+            if sys.platform != "win32":
+                ACTIVITY_LOG_DIR.chmod(0o700)
         except Exception:
             pass
 

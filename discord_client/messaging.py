@@ -5,6 +5,7 @@ line_client/messaging.py と同じインターフェース。
 """
 
 import logging
+import tempfile
 from pathlib import Path
 
 import discord
@@ -26,7 +27,7 @@ _MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
 # 画像送信の許可ディレクトリ
 _ALLOWED_IMAGE_DIRS: list[Path] = [
     STATIC_DIR.resolve(),
-    Path("/tmp").resolve(),
+    Path(tempfile.gettempdir()).resolve(),
 ]
 
 

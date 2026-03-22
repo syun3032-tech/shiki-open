@@ -41,10 +41,21 @@ def _find_claude() -> str:
         return path
 
     # よくあるインストール先を探す
+    import sys
     common_paths = [
         "/usr/local/bin/claude",
         "/opt/homebrew/bin/claude",
     ]
+    if sys.platform == "win32":
+        import os
+        appdata = os.environ.get("APPDATA", "")
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+        common_paths = [
+            os.path.join(appdata, "npm", "claude.cmd"),
+            os.path.join(localappdata, "npm", "claude.cmd"),
+            os.path.join(appdata, "npm", "claude"),
+            os.path.join(localappdata, "npm", "claude"),
+        ]
     for p in common_paths:
         import os
         if os.path.isfile(p) and os.access(p, os.X_OK):

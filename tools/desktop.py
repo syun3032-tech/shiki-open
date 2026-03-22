@@ -6,6 +6,8 @@ platform_layer経由でOS固有の操作を実行。
 
 import asyncio
 import logging
+import subprocess
+import sys
 
 from platform_layer import get_platform
 from security.url_validator import validate_url
@@ -58,12 +60,29 @@ async def open_url_with_profile(url: str, profile: str) -> dict:
             return {"success": False, "error": f"知らないサイト: {url}。{owner}の許可が必要。", "needs_approval": True}
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "open", "-na", "Google Chrome", "--args",
-            f"--profile-directory={profile_dir}", url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        if sys.platform == "darwin":
+            proc = await asyncio.create_subprocess_exec(
+                "open", "-na", "Google Chrome", "--args",
+                f"--profile-directory={profile_dir}", url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        elif sys.platform == "win32":
+            chrome_args = [
+                "cmd", "/c", "start", "", "chrome",
+                f"--profile-directory={profile_dir}", url,
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *chrome_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                "google-chrome", f"--profile-directory={profile_dir}", url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
         if proc.returncode == 0:
             logger.info(f"URL opened with profile {email}: {url}")

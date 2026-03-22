@@ -14,6 +14,9 @@
 
 import asyncio
 import logging
+import os
+import sys
+import tempfile
 import textwrap
 
 logger = logging.getLogger("shiki.tools")
@@ -137,12 +140,17 @@ async def execute_code(code: str) -> dict:
     )
 
     try:
+        if sys.platform == "win32":
+            safe_env = {"PATH": os.environ.get("PATH", ""), "USERPROFILE": tempfile.gettempdir()}
+        else:
+            safe_env = {"PATH": "/usr/bin:/usr/local/bin", "HOME": tempfile.gettempdir()}
+
         proc = await asyncio.create_subprocess_exec(
-            "python3", "-c", sandbox_script,
+            sys.executable, "-c", sandbox_script,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             # サブプロセスの環境を最小化
-            env={"PATH": "/usr/bin:/usr/local/bin", "HOME": "/tmp"},
+            env=safe_env,
         )
 
         stdout, stderr = await asyncio.wait_for(

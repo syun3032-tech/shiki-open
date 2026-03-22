@@ -38,10 +38,12 @@ def load_mcp_config() -> dict:
         return {"servers": {}}
     try:
         # ファイル権限チェック（他ユーザーに書き込み権限がないことを確認）
-        mode = oct(_MCP_CONFIG_FILE.stat().st_mode)[-3:]
-        if mode not in ("600", "644", "400", "440"):
-            logger.warning(f"MCP config permissions too open: {mode}. Fixing to 600.")
-            _MCP_CONFIG_FILE.chmod(0o600)
+        import sys
+        if sys.platform != "win32":
+            mode = oct(_MCP_CONFIG_FILE.stat().st_mode)[-3:]
+            if mode not in ("600", "644", "400", "440"):
+                logger.warning(f"MCP config permissions too open: {mode}. Fixing to 600.")
+                _MCP_CONFIG_FILE.chmod(0o600)
         return json.loads(_MCP_CONFIG_FILE.read_text(encoding="utf-8"))
     except Exception as e:
         logger.error(f"MCP config load failed: {e}")
