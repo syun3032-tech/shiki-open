@@ -27,13 +27,16 @@ ALLOWED_COMMANDS = frozenset({
     # プロセス
     "ps", "top", "lsof", "which", "whoami", "hostname",
     # 開発
-    "git", "npm", "npx", "node", "pip", "pip3",
+    "git", "npm", "npx", "node", "pip", "pip3", "python", "python3",
     # システム情報
     "uname", "sw_vers", "sysctl", "date", "cal", "uptime",
     # ファイル操作（書き込み系）
     "mkdir", "touch", "cp", "mv",
     # macOS固有（安全なもののみ）
     "screencapture",
+    # Windows固有（安全なもののみ）
+    "dir", "type", "where", "tasklist", "systeminfo", "ver",
+    "findstr", "more", "tree", "attrib", "icacls",
     # その他便利
     "echo", "printf", "open", "pbcopy", "pbpaste",
 })

@@ -200,6 +200,9 @@ async def main():
 
 
 if __name__ == "__main__":
+    # Windows: ProactorEventLoopの終了時エラーを回避
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

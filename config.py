@@ -8,8 +8,20 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# .envファイルを読み込み
-load_dotenv(Path(__file__).parent / ".env")
+# .envファイルを読み込み（UTF-16等の異常エンコーディングに対応）
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    try:
+        _env_content = _env_path.read_bytes()
+        # BOM付きUTF-16を検出してUTF-8に変換
+        if _env_content[:2] in (b'\xff\xfe', b'\xfe\xff'):
+            _env_path.write_text(
+                _env_content.decode("utf-16").replace("\r\n", "\n"),
+                encoding="utf-8",
+            )
+    except Exception:
+        pass
+load_dotenv(_env_path)
 
 # === プロジェクトパス ===
 PROJECT_ROOT = Path(__file__).parent

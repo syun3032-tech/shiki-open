@@ -23,7 +23,7 @@
 """
 
 import asyncio
-import fcntl
+import sys
 import json
 import logging
 import os
@@ -106,12 +106,17 @@ _lock_fd = None
 
 
 def _acquire_lock() -> bool:
-    """排他ロックを取得（二重実行防止）"""
+    """排他ロックを取得（二重実行防止、クロスプラットフォーム対応）"""
     global _lock_fd
     _ensure_dirs()
     try:
         _lock_fd = open(_LOCK_FILE, "w")
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         _lock_fd.write(str(os.getpid()))
         _lock_fd.flush()
         return True
@@ -123,11 +128,19 @@ def _acquire_lock() -> bool:
 
 
 def _release_lock():
-    """排他ロックを解放（_acquire_lockと同じfdを使用）"""
+    """排他ロックを解放（クロスプラットフォーム対応）"""
     global _lock_fd
     try:
         if _lock_fd and not _lock_fd.closed:
-            fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+            if sys.platform == "win32":
+                import msvcrt
+                try:
+                    msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+            else:
+                import fcntl
+                fcntl.flock(_lock_fd, fcntl.LOCK_UN)
             _lock_fd.close()
         _lock_fd = None
         _LOCK_FILE.unlink(missing_ok=True)
