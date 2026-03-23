@@ -101,8 +101,13 @@ async def on_message(message: discord.Message):
     if message.author == client.user:
         return
 
-    # DM以外は無視
-    if not isinstance(message.channel, discord.DMChannel):
+    # DM / メンション / スレッド — どこでも反応（オーナーのみ）
+    is_dm = isinstance(message.channel, discord.DMChannel)
+    is_mentioned = client.user in message.mentions if message.guild else False
+    is_thread = isinstance(message.channel, discord.Thread)
+
+    # サーバーチャンネルではメンション必須（スレッド内は常に反応）
+    if not is_dm and not is_mentioned and not is_thread:
         return
 
     # オーナーチェック
@@ -117,8 +122,11 @@ async def on_message(message: discord.Message):
         await message.channel.send("ちょっと速すぎるよ...少し待って。")
         return
 
-    # メッセージ内容を取得
+    # メッセージ内容を取得（メンション部分を除去）
     user_message = message.content.strip()
+    if is_mentioned:
+        user_message = user_message.replace(f"<@{client.user.id}>", "").strip()
+        user_message = user_message.replace(f"<@!{client.user.id}>", "").strip()
     image_bytes = None
 
     # 画像添付チェック

@@ -29,6 +29,7 @@ logger = logging.getLogger("shiki.discord")
 # === Bot設定 ===
 intents = Intents.default()
 intents.message_content = True  # Privileged Intent（Developer Portalで有効化必須）
+intents.guilds = True           # サーバー/チャンネル/スレッド情報
 
 bot = discord.Client(intents=intents)
 
@@ -112,11 +113,13 @@ async def on_message(message: Message):
         logger.info(f"Not owner (expected {DISCORD_OWNER_IDS}), ignoring")
         return
 
-    # DMまたはメンション付きメッセージのみ反応
+    # DM / メンション / チャンネル / スレッド — どこでも反応
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user in message.mentions if message.guild else False
+    is_thread = isinstance(message.channel, discord.Thread)
 
-    if not is_dm and not is_mentioned:
+    # サーバーチャンネルではメンションがないと反応しない（スレッド内は常に反応）
+    if message.guild and not is_mentioned and not is_thread:
         return
 
     # メッセージ本文を取得（メンション部分を除去）
