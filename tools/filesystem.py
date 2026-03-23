@@ -11,8 +11,8 @@ from security.path_validator import validate_file_access
 
 logger = logging.getLogger("shiki.tools")
 
-MAX_READ_SIZE = 100_000  # 100KB
-MAX_WRITE_SIZE = 50_000  # 50KB
+MAX_READ_SIZE = 1_000_000  # 1MB
+MAX_WRITE_SIZE = 500_000  # 500KB
 
 
 async def read_file(path: str) -> dict:
@@ -69,7 +69,7 @@ async def list_directory(path: str) -> dict:
             size = item.stat().st_size if item.is_file() else 0
             items.append({"name": item.name, "type": kind, "size": size})
         logger.info(f"Listed directory: {path} ({len(items)} items)")
-        return {"success": True, "items": items[:100]}  # 最大100件
+        return {"success": True, "items": items[:500]}  # 最大500件
     except Exception as e:
         return {"success": False, "error": str(e)}
 

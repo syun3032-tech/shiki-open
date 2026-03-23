@@ -47,5 +47,5 @@ class RateLimiter:
         return max(0, self.max_requests - current)
 
 
-# メッセージレートリミッター（30メッセージ/分）
-message_limiter = RateLimiter(max_requests=30, window_seconds=60)
+# メッセージレートリミッター（120メッセージ/分）
+message_limiter = RateLimiter(max_requests=120, window_seconds=60)

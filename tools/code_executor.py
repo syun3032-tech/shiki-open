@@ -22,10 +22,10 @@ import textwrap
 logger = logging.getLogger("shiki.tools")
 
 # 実行タイムアウト（秒）
-_TIMEOUT = 10
+_TIMEOUT = 30
 
 # 出力上限（バイト）
-_MAX_OUTPUT = 10_000
+_MAX_OUTPUT = 100_000
 
 # サンドボックス内で実行されるラッパースクリプト
 # - 危険なモジュールのimportをブロック
@@ -37,21 +37,70 @@ import io
 
 # === 危険モジュールのブロック ===
 _BLOCKED_MODULES = frozenset({
-    "os", "subprocess", "shutil", "signal", "ctypes",
+    "subprocess", "shutil", "signal", "ctypes",
     "socket", "http", "urllib", "requests", "httpx", "aiohttp",
     "importlib", "runpy", "code", "codeop",
     "multiprocessing", "threading", "concurrent",
     "pickle", "shelve", "marshal",
     "webbrowser", "antigravity",
-    "pathlib",  # ファイルアクセスは既存ツール経由
     "tempfile", "glob",
-    "sqlite3", "dbm",
+    "dbm",
 })
 
 _original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
 
+_BLOCKED_OS_ATTRS = frozenset({
+    "system", "exec", "execl", "execle", "execlp", "execlpe",
+    "execv", "execve", "execvp", "execvpe",
+    "spawn", "spawnl", "spawnle", "spawnlp", "spawnlpe",
+    "spawnv", "spawnve", "spawnvp", "spawnvpe",
+    "popen", "popen2", "popen3", "popen4",
+})
+
+_ALLOWED_OS_ATTRS = frozenset({
+    "environ", "getcwd", "path", "listdir", "sep", "linesep",
+    "name", "curdir", "pardir", "extsep", "altsep", "pathsep",
+    "devnull", "getenv", "cpu_count", "getpid", "urandom",
+})
+
+class _RestrictedOs:
+    """osモジュールの安全なサブセットのみ公開するラッパー"""
+    def __init__(self, real_os):
+        self._real_os = real_os
+        self.path = real_os.path
+        self.environ = dict(real_os.environ)  # コピー（書き込み不可にするため）
+        self.sep = real_os.sep
+        self.linesep = real_os.linesep
+        self.name = real_os.name
+        self.curdir = real_os.curdir
+        self.pardir = real_os.pardir
+    def getcwd(self): return self._real_os.getcwd()
+    def listdir(self, p='.'): return self._real_os.listdir(p)
+    def getenv(self, key, default=None): return self._real_os.getenv(key, default)
+    def cpu_count(self): return self._real_os.cpu_count()
+    def getpid(self): return self._real_os.getpid()
+    def urandom(self, n): return self._real_os.urandom(n)
+    def __getattr__(self, name):
+        if name in _BLOCKED_OS_ATTRS:
+            raise AttributeError(f"セキュリティ: os.{name} は使用できません")
+        if name in _ALLOWED_OS_ATTRS:
+            return getattr(self._real_os, name)
+        raise AttributeError(f"セキュリティ: os.{name} は使用できません")
+
 def _safe_import(name, *args, **kwargs):
     top = name.split(".")[0]
+    # osモジュール: 制限付きで許可
+    if top == "os":
+        import os as _real_os
+        if name == "os.path":
+            return _real_os.path
+        return _RestrictedOs(_real_os)
+    # pathlib: 許可
+    if top == "pathlib":
+        return _original_import(name, *args, **kwargs)
+    # sqlite3: 許可
+    if top == "sqlite3":
+        return _original_import(name, *args, **kwargs)
     if top in _BLOCKED_MODULES:
         raise ImportError(f"セキュリティ: '{name}' のimportは禁止されています")
     return _original_import(name, *args, **kwargs)
@@ -121,9 +170,10 @@ async def execute_code(code: str) -> dict:
 
     # 事前チェック: 明らかに危険なパターン
     code_lower = code.lower()
-    for dangerous in ("import os", "import subprocess", "import socket",
+    for dangerous in ("import subprocess", "import socket",
                       "import shutil", "import ctypes", "__import__",
-                      "open(", "exec(", "eval("):
+                      "os.system(", "os.popen(", "os.exec",
+                      "exec(", "eval("):
         if dangerous in code_lower:
             return {
                 "success": False,

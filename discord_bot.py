@@ -47,8 +47,15 @@ _disconnect_since: float | None = None
 
 
 def _is_owner(user_id: int) -> bool:
-    """オーナーかどうか判定（複数アカウント対応）"""
-    return user_id in DISCORD_OWNER_IDS
+    """オーナーかどうか判定（複数アカウント + authorized_users対応）"""
+    if user_id in DISCORD_OWNER_IDS:
+        return True
+    try:
+        import user_config
+        authorized = user_config.get("authorized_discord_ids", [])
+        return user_id in authorized
+    except Exception:
+        return False
 
 
 @bot.event

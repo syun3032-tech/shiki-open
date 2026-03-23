@@ -29,9 +29,18 @@ ALLOWED_COMMANDS = frozenset({
     "ps", "top", "lsof", "which", "whoami", "hostname",
     # 開発
     "git", "npm", "npx", "node", "pip", "pip3", "python", "python3",
+    "cargo", "go", "rustc", "gcc", "make", "cmake",
+    # コンテナ
+    "docker", "docker-compose",
+    # パッケージマネージャー
+    "brew", "apt", "apt-get",
+    # ネットワーク
+    "curl", "wget",
+    # ファイル操作（書き込み系）
+    "rm", "rmdir", "chmod", "chown",
     # システム情報
     "uname", "sw_vers", "sysctl", "date", "cal", "uptime",
-    # ファイル操作（書き込み系）
+    # ファイル操作（その他）
     "mkdir", "touch", "cp", "mv",
     # macOS固有（安全なもののみ）
     "screencapture",
@@ -48,14 +57,11 @@ _SHELL_METACHAR_PATTERN = re.compile(r'[;`${}]|&&|\|\||<<|>>|\$\(')
 # 絶対に実行させないパターン
 BLOCKED_PATTERNS = [
     "sudo", "su ",
-    "rm ", "rm\t", "rmdir",  # 削除系は全ブロック
     "mkfs", "dd if=", "chmod 777", "> /dev/",
-    "curl ", "wget ",  # ネットワーク送受信はブロック
     "eval ", "exec ",
     "launchctl", "defaults write", "defaults delete",
     "networksetup -set",
     "security ", "keychain",
-    "git push", "git remote add", "git remote set",
     "git config --global",
 ]
 
@@ -65,8 +71,8 @@ _GIT_ALLOWED_SUBCOMMANDS = frozenset({
     "ls-files", "ls-tree", "rev-parse", "describe",
     "blame", "shortlog", "stash", "stash list",
     "add", "commit", "checkout", "switch", "merge",
-    "fetch", "pull", "rebase", "cherry-pick", "reset",
-    "init", "clone",
+    "fetch", "pull", "push", "rebase", "cherry-pick", "reset",
+    "init", "clone", "remote", "config",
 })
 
 # パイプの組み合わせで危険になるパターン
@@ -80,8 +86,8 @@ _DANGEROUS_PIPE_PATTERNS = [
     (None, {"sh", "bash", "zsh"}, r"(sh|bash|zsh)(\s+|$)"),
 ]
 
-MAX_OUTPUT = 10_000  # 出力上限
-TIMEOUT = 30  # 秒
+MAX_OUTPUT = 100_000  # 出力上限（100KB）
+TIMEOUT = 120  # 秒
 
 
 def _split_pipe_segments(command: str) -> list[str]:
@@ -157,6 +163,15 @@ def _validate_command(command: str) -> tuple[bool, str]:
         # ホワイトリストチェック
         if cmd_name not in ALLOWED_COMMANDS:
             return False, f"許可されていないコマンド: {cmd_name}"
+
+        # rm: パス検証（ALLOWED_WRITE_PATHSの範囲内のみ許可）
+        if cmd_name == "rm" and len(segment) > 1:
+            from security.path_validator import validate_file_access
+            for arg in segment[1:]:
+                if arg.startswith("-"):
+                    continue  # フラグはスキップ
+                if not validate_file_access(arg, "write"):
+                    return False, f"rm: 許可されていないパス: {arg}"
 
         # gitサブコマンド制限
         if cmd_name == "git" and len(segment) > 1:

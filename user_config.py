@@ -35,6 +35,8 @@ _DEFAULT_CONFIG = {
         "discord": False,
         "cli": True,
     },
+    "authorized_discord_ids": [],  # Additional users who can interact
+    "security_mode": "standard",   # "strict" or "standard"
     "observation": {
         "enabled": False,
         "interval_seconds": 5,

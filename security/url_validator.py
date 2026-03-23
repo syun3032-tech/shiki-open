@@ -1,6 +1,6 @@
 """URL安全性検証
 
-3段階: 信頼済み → 怪しいパターン検出 → 未知はブロック
+3段階: 信頼済み → 危険パターン検出 → 未知は警告付き許可
 """
 
 import ipaddress
@@ -78,14 +78,12 @@ DANGEROUS_PATTERNS = [
     r"\.sh$",                     # シェルスクリプト
     r"data:",                     # data URL
     r"javascript:",               # XSS
+    r"file://",                   # ローカルファイルアクセス
     r"@.*@",                      # 二重@（フィッシング手法）
-    r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",  # IPアドレス直接（ほぼ怪しい）
-    r"bit\.ly|tinyurl|t\.co|goo\.gl|is\.gd|shorturl",  # 短縮URL（中身が分からない）
 ]
 
-# === 怪しいドメインパターン ===
+# === 怪しいドメインパターン（高精度のみ） ===
 SUSPICIOUS_PATTERNS = [
-    r"login|signin|account|verify|secure|update|confirm",  # フィッシング語
     r"free.*gift|prize|winner|congratulation",               # スパム語
     r"-{3,}",                     # ハイフン多すぎ
     r"\.(tk|ml|ga|cf|gq|buzz|top|xyz|club|icu|cam)$",  # 悪用多いTLD
@@ -182,9 +180,19 @@ def validate_url(url: str) -> dict:
             "level": "blocked",
         }
 
-    # 2.5. SSRF対策: プライベートIP/localhost検出（IPv4 + IPv6）
+    # 2.5. localhost/プライベートIP: 開発用途で許可
+    # ただしクラウドメタデータエンドポイントはブロック
     ssrf_check = _check_ssrf(domain)
     if ssrf_check:
+        # localhost, loopback, private networkは許可（開発用）
+        if any(keyword in ssrf_check for keyword in ("localhost", "loopback", "private network")):
+            logger.info(f"URL ALLOWED (local/private): {url} - {ssrf_check}")
+            return {
+                "safe": True,
+                "reason": f"ローカル/プライベートネットワーク ({ssrf_check})",
+                "level": "trusted",
+            }
+        # メタデータ/reserved/link-localはブロック
         logger.warning(f"URL BLOCKED (SSRF): {url} - {ssrf_check}")
         return {
             "safe": False,
@@ -201,20 +209,29 @@ def validate_url(url: str) -> dict:
                 "level": "trusted",
             }
 
-    # 4. 怪しいパターンチェック
+    # 4. 怪しいパターンチェック（警告のみ、ブロックしない）
     for pattern in SUSPICIOUS_PATTERNS:
         if re.search(pattern, domain):
-            logger.warning(f"URL BLOCKED (suspicious): {url}")
+            logger.warning(f"URL WARNING (suspicious pattern): {url}")
             return {
-                "safe": False,
-                "reason": f"怪しいドメインパターンを検出: {domain}",
-                "level": "blocked",
+                "safe": True,
+                "reason": f"怪しいドメインパターン検出（警告）: {domain}",
+                "level": "unknown",
             }
 
-    # 5. 未知のドメイン → ブロック（オーナーに確認）
-    logger.info(f"URL UNKNOWN: {url} (domain: {domain})")
+    # 5. 未知のドメイン → 警告付きで許可
+    parsed = urlparse(url if url.startswith(("http://", "https://")) else "https://" + url)
+    scheme = parsed.scheme
+    if scheme == "http":
+        logger.warning(f"URL ALLOWED with warning (HTTP, unknown): {url} (domain: {domain})")
+        return {
+            "safe": True,
+            "reason": f"未知のHTTPサイト（警告）: {domain}",
+            "level": "unknown",
+        }
+    logger.info(f"URL ALLOWED (unknown HTTPS): {url} (domain: {domain})")
     return {
-        "safe": False,
-        "reason": f"未知のサイト: {domain}",
+        "safe": True,
+        "reason": f"未知のHTTPSサイト: {domain}",
         "level": "unknown",
     }

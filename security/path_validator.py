@@ -24,7 +24,12 @@ ALLOWED_READ_PATHS = [
     Path.home() / "Desktop",
     Path.home() / "Documents",
     Path.home() / "Downloads",
+    Path.home() / "Projects",
+    Path.home() / "Dev",
+    Path.home() / "Code",
+    Path.home() / "src",
     Path(tempfile.gettempdir()) / "shiki",
+    Path(tempfile.gettempdir()),
     _PROJECT_ROOT,
 ]
 
@@ -33,7 +38,10 @@ ALLOWED_WRITE_PATHS = [
     Path.home() / "Desktop",
     Path.home() / "Documents",
     Path.home() / "Downloads",
+    Path.home() / "Projects",
+    Path.home() / "Dev",
     Path(tempfile.gettempdir()) / "shiki",
+    Path(tempfile.gettempdir()),
     _PROJECT_ROOT / ".ritsu",
     _PROJECT_ROOT / "static" / "images",
     _PROJECT_ROOT / "logs",
